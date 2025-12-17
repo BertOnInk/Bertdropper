@@ -101,6 +101,33 @@
         const INK_CHAIN_ID_DEC = 57073;
         const INK_RPC_URL = 'https://rpc-gel.inkonchain.com';
         const INK_EXPLORER_URL = 'https://explorer.inkonchain.com';
+        
+        // --- CONSTANTS: CONTRACTS ---
+        const BERT_DROPPER_ADDRESS = "0xDD4726B7327E093E95F84274974A582c02d062c0";
+
+        const ABIS = {
+            ERC20: [
+                "function approve(address spender, uint256 amount) returns (bool)",
+                "function allowance(address owner, address spender) view returns (uint256)",
+                "function decimals() view returns (uint8)",
+                "function balanceOf(address) view returns (uint256)"
+            ],
+            ERC721: [
+                "function setApprovalForAll(address operator, bool approved)",
+                "function isApprovedForAll(address owner, address operator) view returns (bool)",
+                "function ownerOf(uint256 tokenId) view returns (address)"
+            ],
+            ERC1155: [
+                "function setApprovalForAll(address operator, bool approved)",
+                "function isApprovedForAll(address account, address operator) view returns (bool)",
+                "function balanceOf(address account, uint256 id) view returns (uint256)"
+            ],
+            DISPERSER: [
+                "function disperseERC20(address token, address[] recipients, uint256[] values)",
+                "function disperseERC721(address token, address[] recipients, uint256[] tokenIds)",
+                "function disperseERC1155(address token, address[] recipients, uint256[] tokenIds, uint256[] values)"
+            ]
+        };
 
         // --- ICONS ---
         const IconWallet = ({ size = 24, className = "" }) => (
@@ -223,6 +250,11 @@
             const [errorMsg, setErrorMsg] = useState(null);
             const [chainId, setChainId] = useState(null);
             
+            // Transaction Status
+            // 'IDLE' | 'APPROVING' | 'SENDING' | 'SUCCESS' | 'ERROR'
+            const [txStatus, setTxStatus] = useState('IDLE');
+            const [txHash, setTxHash] = useState(null);
+
             // Token Data
             const [tokenSymbol, setTokenSymbol] = useState('');
             const [tokenDecimals, setTokenDecimals] = useState(18);
@@ -279,6 +311,8 @@
                 setFixedAmount('');
                 setErrorMsg(null);
                 setTokenError(null);
+                setTxStatus('IDLE');
+                setTxHash(null);
             };
 
             const removeDuplicates = () => {
@@ -338,6 +372,8 @@
                 setTokenError(null);
                 setUserBalance(null); // Reset balance on new token
                 setOwnedTokenIds([]); // Reset specific IDs
+                setTxStatus('IDLE');
+                setTxHash(null);
 
                 const fetchTokenData = async () => {
                     if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
@@ -430,7 +466,6 @@
                 }
 
                 // 1. IMMEDIATE LOADING STATE
-                // This prevents the "No IDs found" flicker by showing "Scanning..." immediately
                 setIsLoadingIds(true);
                 setOwnedTokenIds([]);
 
@@ -461,10 +496,9 @@
                         console.warn("API scan failed or not supported, attempting log scan.", e);
                     }
 
-                    // 2. Fallback: Log Scan (If API failed or returned nothing, try recent logs)
+                    // 2. Fallback: Log Scan
                     if (!apiSuccess || idsToCheck.size === 0) {
                         try {
-                            // 1. Scan for incoming transfers to user
                             if (tokenType === 'ERC721') {
                                 const filter = {
                                     address: tokenAddress,
@@ -541,7 +575,6 @@
                         }));
                     }
                     
-                    // Sort numerically
                     verifiedIds.sort((a, b) => {
                         try { return Number(a) - Number(b); } catch(e) { return 0; }
                     });
@@ -550,7 +583,6 @@
                     setIsLoadingIds(false);
                 };
                 
-                // Debounce
                 const timer = setTimeout(fetchIds, 1000);
                 return () => clearTimeout(timer);
             }, [tokenAddress, tokenType, userAddress, walletConnected]);
@@ -559,27 +591,22 @@
             // Handler for clicking a chip
             const handleSelectTokenId = (id) => {
                 const newRecipients = [...recipients];
-                
-                // 1. Find the first row where tokenId is empty
                 const emptyIndex = newRecipients.findIndex(r => !r.tokenId || r.tokenId.trim() === '');
                 
                 if (emptyIndex !== -1) {
                     newRecipients[emptyIndex].tokenId = id;
                 } else {
-                    // 2. If no empty rows, add a new one
                     if (newRecipients.length >= 500) {
                         setErrorMsg("Limit reached.");
                         return;
                     }
                     newRecipients.push({ address: '', amount: '', tokenId: id });
                 }
-                
                 setRecipients(newRecipients);
             };
 
             // --- TOKEN DROPDOWN LOGIC ---
             
-            // Helper to get contract info
             const getContractInfo = async (contractAddress, provider) => {
                 try {
                     const abi = [
@@ -591,25 +618,17 @@
                     ];
                     const contract = new ethers.Contract(contractAddress, abi, provider);
                     
-                    // Check balance first to fail fast. 
-                    // Note: This fails for ERC1155 usually because balanceOf needs an ID, 
-                    // but we can catch it.
                     let balance = 0n;
                     try {
                         balance = await contract.balanceOf(userAddress);
-                    } catch (e) {
-                        // Likely ERC1155 or requires args. We continue anyway to check Interface.
-                        // We will set balance to 0 temporarily if it failed.
-                    }
+                    } catch (e) {}
                     
-                    // Determine type (loose check)
                     let type = 'ERC20';
                     try {
                         const is721 = await contract.supportsInterface("0x80ac58cd");
                         if (is721) {
                              type = 'ERC721';
                         } else {
-                            // Check 1155 if not 721
                             const is1155 = await contract.supportsInterface("0xd9b67a26");
                             if (is1155) type = 'ERC1155';
                         }
@@ -643,34 +662,19 @@
                 const provider = new ethers.JsonRpcProvider(INK_RPC_URL);
                 const foundTokens = new Map();
 
-                // 1. SCAN LOGS (The robust "other way")
                 try {
                     const paddedAddress = ethers.zeroPadValue(address, 32);
-                    
-                    // Filter 1: ERC20/721 Transfer(from, to, value)
                     const filterTransfer = {
                         fromBlock: 0, 
                         toBlock: 'latest',
-                        topics: [
-                            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
-                            null, // from (any)
-                            paddedAddress // to (user)
-                        ]
+                        topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef', null, paddedAddress]
                     };
-
-                    // Filter 2: ERC1155 TransferSingle(operator, from, to, id, value)
                     const filterSingle = {
                         fromBlock: 0,
                         toBlock: 'latest',
-                        topics: [
-                            '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62',
-                            null, // operator
-                            null, // from
-                            paddedAddress // to
-                        ]
+                        topics: ['0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62', null, null, paddedAddress]
                     };
                     
-                    // Execute scans (parallel)
                     const [logsTransfer, logsSingle] = await Promise.all([
                         provider.getLogs(filterTransfer).catch(()=>[]),
                         provider.getLogs(filterSingle).catch(()=>[])
@@ -679,8 +683,6 @@
                     const allLogs = [...logsTransfer, ...logsSingle];
                     const uniqueContracts = [...new Set(allLogs.map(l => l.address))];
                     
-                    // Verify balances for found contracts
-                    // Limit concurrent requests to avoid rate limits
                     const chunkSize = 5;
                     for (let i = 0; i < uniqueContracts.length; i += chunkSize) {
                         const chunk = uniqueContracts.slice(i, i + chunkSize);
@@ -689,8 +691,6 @@
                         results.forEach(res => {
                             if (res) foundTokens.set(res.address.toLowerCase(), res);
                         });
-                        
-                        // Progressive update
                         setUserTokens(Array.from(foundTokens.values()));
                     }
 
@@ -698,7 +698,6 @@
                     console.warn("Log scan failed:", e);
                 }
 
-                // 2. API FALLBACK
                 try {
                     const response = await fetch(`${INK_EXPLORER_URL}/api?module=account&action=tokenlist&address=${cleanAddress}`, {
                         headers: { 'Accept': 'application/json' }
@@ -706,22 +705,15 @@
                     if (response.ok) {
                          const json = await response.json();
                          if (json.status === '1' && Array.isArray(json.result)) {
-                             // Process API results - Don't assume ERC20 blindly anymore
-                             // We want to verify them if they aren't already in our map
                              const newCandidates = json.result.filter(t => !foundTokens.has(t.contractAddress.toLowerCase()));
-                             
-                             // Quick verify chunk
                              const results = await Promise.all(newCandidates.map(async t => {
-                                 // Try to use getContractInfo to get real type
                                  const info = await getContractInfo(t.contractAddress, provider);
                                  if (info) return info;
-                                 
-                                 // Fallback to API data if verification fails but it exists
                                  return {
                                      address: t.contractAddress,
                                      symbol: t.symbol || '???',
                                      name: t.name || 'Unknown',
-                                     type: 'ERC20', // Default if we really can't tell
+                                     type: 'ERC20', 
                                      balance: t.balance,
                                      decimals: t.decimals
                                  };
@@ -747,7 +739,7 @@
                 }
             }, [walletConnected, userAddress]);
 
-            // Click outside handler for dropdown
+            // Click outside handler
             useEffect(() => {
                 const handleClickOutside = (event) => {
                     if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -758,7 +750,7 @@
                 return () => document.removeEventListener("mousedown", handleClickOutside);
             }, []);
 
-            // Auto-connect logic
+            // Auto-connect
             useEffect(() => {
                 const attemptAutoConnect = async () => {
                     if (window.ethereum) {
@@ -770,15 +762,12 @@
                                 const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
                                 setChainId(parseInt(chainIdHex, 16));
                             }
-                        } catch (e) {
-                            console.log("Auto-connect error:", e);
-                        }
+                        } catch (e) {}
                     }
                 };
                 attemptAutoConnect();
             }, []);
 
-            // Filter tokens for dropdown
             const filteredUserTokens = useMemo(() => {
                 return userTokens.filter(t => {
                     if (tokenType === 'ERC20') return t.type === 'ERC20';
@@ -792,7 +781,6 @@
             const processCSV = (content) => {
                 try {
                     const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
-                    
                     if (lines.length > 5000) {
                         setErrorMsg("CSV too large. Please limit to 5000 rows.");
                         return;
@@ -854,10 +842,9 @@
                 }
             }, [tokenType, mode, fixedAmount, recipients, recipientCount]);
 
-            // Calculate if balance is sufficient
             const hasInsufficientBalance = useMemo(() => {
-                if (userBalance === null) return false; // Not checked yet
-                if (tokenType === 'ERC1155') return false; // Complex check skipped
+                if (userBalance === null) return false;
+                if (tokenType === 'ERC1155') return false; 
                 return parseFloat(userBalance) < totalTokens;
             }, [userBalance, totalTokens, tokenType]);
 
@@ -925,6 +912,8 @@
                 }
             }, []);
 
+            // --- MAIN AIRDROP LOGIC ---
+
             const handleExecuteAirdrop = async () => {
                 if (!walletConnected) { await connectWallet(); return; }
                 if (chainId !== INK_CHAIN_ID_DEC) { await switchNetwork(); return; }
@@ -932,36 +921,116 @@
                 
                 const validRecipients = recipients.filter(r => ethers.isAddress(r.address));
                 if (validRecipients.length === 0) { setErrorMsg("No valid recipient addresses found."); return; }
-
                 if (hasInsufficientBalance) { setErrorMsg("Insufficient token balance for this airdrop."); return; }
 
-                const addressList = validRecipients.map(r => r.address);
-                
-                let callDetails = "";
-                let fnName = "";
+                setTxStatus('APPROVING');
+                setErrorMsg(null);
+                setTxHash(null);
 
-                if (tokenType === 'ERC20') {
-                     fnName = "disperseERC20";
-                     const amountList = mode === 'FIXED' ? validRecipients.map(() => fixedAmount) : validRecipients.map(r => r.amount);
-                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\nvalues: ${JSON.stringify(amountList)}`;
-                } else if (tokenType === 'ERC721') {
-                     fnName = "disperseERC721";
-                     const idList = validRecipients.map(r => r.tokenId);
-                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\ntokenIds: ${JSON.stringify(idList)}`;
-                } else if (tokenType === 'ERC1155') {
-                     fnName = "disperseERC1155";
-                     const idList = validRecipients.map(r => r.tokenId);
-                     const amountList = mode === 'FIXED' ? validRecipients.map(() => fixedAmount) : validRecipients.map(r => r.amount);
-                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\nids: ${JSON.stringify(idList)}\nvalues: ${JSON.stringify(amountList)}`;
+                try {
+                    const provider = new ethers.BrowserProvider(window.ethereum);
+                    const signer = await provider.getSigner();
+                    
+                    // 1. APPROVAL LOGIC
+                    // We need to check if the BERT_DROPPER_ADDRESS is allowed to spend the user's tokens
+                    
+                    if (tokenType === 'ERC20') {
+                        const tokenContract = new ethers.Contract(tokenAddress, ABIS.ERC20, signer);
+                        const totalAmountStr = mode === 'FIXED' 
+                            ? (parseFloat(fixedAmount) * validRecipients.length).toFixed(18) // simple approximation for check
+                            : validRecipients.reduce((a, b) => a + (parseFloat(b.amount)||0), 0).toFixed(18);
+                            
+                        // Convert to BigInt using decimals
+                        const amountBigInt = ethers.parseUnits(totalAmountStr, tokenDecimals);
+                        
+                        // Check Allowance
+                        const allowance = await tokenContract.allowance(userAddress, BERT_DROPPER_ADDRESS);
+                        
+                        if (allowance < amountBigInt) {
+                            // Trigger Approve
+                            const approveTx = await tokenContract.approve(BERT_DROPPER_ADDRESS, ethers.MaxUint256); // Approve max for convenience
+                            await approveTx.wait();
+                        }
+
+                    } else if (tokenType === 'ERC721') {
+                        const tokenContract = new ethers.Contract(tokenAddress, ABIS.ERC721, signer);
+                        const isApproved = await tokenContract.isApprovedForAll(userAddress, BERT_DROPPER_ADDRESS);
+                        
+                        if (!isApproved) {
+                            const approveTx = await tokenContract.setApprovalForAll(BERT_DROPPER_ADDRESS, true);
+                            await approveTx.wait();
+                        }
+
+                    } else if (tokenType === 'ERC1155') {
+                         const tokenContract = new ethers.Contract(tokenAddress, ABIS.ERC1155, signer);
+                         const isApproved = await tokenContract.isApprovedForAll(userAddress, BERT_DROPPER_ADDRESS);
+                         
+                         if (!isApproved) {
+                            const approveTx = await tokenContract.setApprovalForAll(BERT_DROPPER_ADDRESS, true);
+                            await approveTx.wait();
+                         }
+                    }
+
+                    // 2. DISPERSE LOGIC
+                    setTxStatus('SENDING');
+                    
+                    const bertContract = new ethers.Contract(BERT_DROPPER_ADDRESS, ABIS.DISPERSER, signer);
+                    const addressList = validRecipients.map(r => r.address);
+                    
+                    let tx;
+                    
+                    if (tokenType === 'ERC20') {
+                        const values = mode === 'FIXED'
+                            ? validRecipients.map(() => ethers.parseUnits(fixedAmount, tokenDecimals))
+                            : validRecipients.map(r => ethers.parseUnits(r.amount, tokenDecimals));
+                            
+                        tx = await bertContract.disperseERC20(tokenAddress, addressList, values);
+
+                    } else if (tokenType === 'ERC721') {
+                        const tokenIds = validRecipients.map(r => r.tokenId);
+                        tx = await bertContract.disperseERC721(tokenAddress, addressList, tokenIds);
+
+                    } else if (tokenType === 'ERC1155') {
+                        const tokenIds = validRecipients.map(r => r.tokenId);
+                        const values = mode === 'FIXED'
+                            ? validRecipients.map(() => ethers.parseUnits(fixedAmount, 0)) // usually 1155 amount is int
+                            : validRecipients.map(r => ethers.parseUnits(r.amount, 0));
+                            
+                        tx = await bertContract.disperseERC1155(tokenAddress, addressList, tokenIds, values);
+                    }
+
+                    // Wait for confirmation
+                    const receipt = await tx.wait();
+                    
+                    setTxStatus('SUCCESS');
+                    setTxHash(receipt.hash);
+                    
+                } catch (err) {
+                    console.error("Airdrop failed:", err);
+                    setTxStatus('ERROR');
+                    setErrorMsg(err.reason || err.message || "Transaction failed. Please check console.");
                 }
-
-                alert(`Ready to Airdrop on Ink L2!\n\nStandard: ${tokenType}\nRecipients: ${addressList.length}\n\nContract Interaction Data:\n${callDetails}\n\n(This data should be passed to the smart contract)`);
             };
 
             const getCsvExample = () => {
                 if (tokenType === 'ERC20') return `0x123...abc, 100 (Qty)\n0x456...def, 250 (Qty)`;
                 if (tokenType === 'ERC721') return `0x123...abc, 1 (Token ID)\n0x456...def, 55 (Token ID)`;
                 return `0x123...abc, 1001 (ID), 50 (Qty)\n0x456...def, 1002 (ID), 1 (Qty)`;
+            };
+            
+            // Render Button Label based on State
+            const getButtonText = () => {
+                if (!walletConnected) return 'Connect Wallet First';
+                if (chainId !== INK_CHAIN_ID_DEC) return 'Switch to Ink Network';
+                if (hasInsufficientBalance) return 'Insufficient Balance';
+                
+                switch (txStatus) {
+                    case 'APPROVING': return 'Approving Contract...';
+                    case 'SENDING': return 'Processing Airdrop...';
+                    case 'SUCCESS': return 'Airdrop Successful!';
+                    case 'ERROR': return 'Retry Airdrop';
+                    default: return 'Approve & Airdrop';
+                }
             };
 
             return (
@@ -1004,9 +1073,26 @@
                             {errorMsg && (
                                 <div className="mb-6 p-3 bg-red-100 border border-red-300 rounded-lg flex items-center gap-2 text-red-700 text-sm font-bold animate-pulse">
                                     <IconAlert size={16} />
-                                    {errorMsg}
+                                    <span className="break-all">{errorMsg}</span>
                                 </div>
                             )}
+                            
+                            {txStatus === 'SUCCESS' && (
+                                <div className="mb-6 p-4 bg-green-100 border border-green-300 rounded-lg flex flex-col gap-2 text-green-800 text-sm animate-in fade-in">
+                                    <div className="flex items-center gap-2 font-bold text-lg">
+                                        <IconCheck size={24} />
+                                        <span>Airdrop Complete!</span>
+                                    </div>
+                                    <p>Your tokens have been distributed successfully.</p>
+                                    {txHash && (
+                                        <a href={`${INK_EXPLORER_URL}/tx/${txHash}`} target="_blank" rel="noreferrer" className="text-green-600 underline hover:text-green-800 font-mono text-xs">
+                                            View Transaction: {txHash.slice(0, 10)}...{txHash.slice(-10)}
+                                        </a>
+                                    )}
+                                    <button onClick={clearAll} className="mt-2 bg-green-200 hover:bg-green-300 text-green-800 py-2 px-4 rounded font-bold transition">Start New Airdrop</button>
+                                </div>
+                            )}
+
                             {walletConnected && chainId !== INK_CHAIN_ID_DEC && (
                                  <div className="mb-6 p-3 bg-yellow-100 border border-yellow-300 rounded-lg flex items-center justify-between gap-2 text-yellow-800 text-sm font-bold">
                                     <div className="flex items-center gap-2">
@@ -1267,11 +1353,11 @@
 
                             <Button 
                                 fullWidth 
-                                disabled={!walletConnected || recipientCount === 0 || (walletConnected && chainId !== INK_CHAIN_ID_DEC) || hasInsufficientBalance} 
+                                disabled={!walletConnected || recipientCount === 0 || (walletConnected && chainId !== INK_CHAIN_ID_DEC) || hasInsufficientBalance || (txStatus !== 'IDLE' && txStatus !== 'ERROR' && txStatus !== 'SUCCESS')} 
                                 onClick={handleExecuteAirdrop} 
                                 className={`py-4 text-lg ${hasInsufficientBalance ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
                             >
-                                {walletConnected ? (chainId !== INK_CHAIN_ID_DEC ? 'Switch to Ink Network' : (hasInsufficientBalance ? 'Insufficient Balance' : 'Approve & Airdrop')) : 'Connect Wallet First'}
+                                {getButtonText()}
                             </Button>
                         </Card>
                     </main>
