@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Bertdropper | Batch Distributor</title>
+    
+    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+
+    <!-- Fonts matching Inkscriptions -->
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Permanent+Marker&family=Fredoka:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Ethers.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+
+    <style>
+        body { 
+            font-family: 'Fredoka', sans-serif; 
+            /* Matching Inkscriptions Background with Image */
+            background-image: 
+                url('bg.png'),
+                linear-gradient(135deg, #a855f7, #c084fc);
+            background-size: cover;
+            background-position: center center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            background-color: #a855f7; 
+            color: #333; 
+        }
+
+        /* Titles */
+        .graffiti-title {
+            font-family: 'Bungee', cursive;
+            color: #ffffff !important; 
+            text-shadow: 2px 2px #9333ea, 4px 4px #7c3aed; 
+        }
+        .font-handwritten {
+            font-family: 'Permanent Marker', cursive;
+        }
+        
+        /* Glassmorphism Card Style - Matching Reference */
+        .glass-card { 
+            background-color: rgba(255, 255, 255, 0.95); 
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+        
+        /* Updated Button Styling: Gradient & Glow to match Inkscriptions */
+        .btn-gradient { 
+            background: linear-gradient(135deg, #9333ea 0%, #d946ef 100%);
+            box-shadow: 0 4px 15px rgba(147, 51, 234, 0.4);
+            transition: all 0.3s ease;
+        }
+        .btn-gradient:hover { 
+            background: linear-gradient(135deg, #7c3aed 0%, #c026d3 100%);
+            box-shadow: 0 6px 20px rgba(147, 51, 234, 0.6);
+            transform: translateY(-1px);
+        }
+        .btn-gradient:active {
+            transform: translateY(1px);
+        }
+
+        /* Scrollbar styling */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f3f4f6; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+        /* Specific Input Styling from Inkscriptions */
+        .ink-input {
+            border: 2px solid #ddd6fe; /* violet-200 */
+            transition: all 0.2s;
+        }
+        .ink-input:focus {
+            border-color: #8b5cf6; /* violet-500 */
+            box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2); /* ring-2 ring-violet-500 approx */
+            outline: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- CONSTANTS: INK NETWORK ---
+        const INK_CHAIN_ID_HEX = '0xDEE1'; // 57073
+        const INK_CHAIN_ID_DEC = 57073;
+        const INK_RPC_URL = 'https://rpc-gel.inkonchain.com';
+        const INK_EXPLORER_URL = 'https://explorer.inkonchain.com';
+
+        // --- ICONS ---
+        const IconWallet = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg>
+        );
+        const IconTrash = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+        );
+        const IconUpload = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+        );
+        const IconPlus = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        );
+        const IconInfo = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        );
+        const IconAlert = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        );
+        const IconFilter = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        );
+        const IconChevronDown = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 12 15 18 9"/></svg>
+        );
+        const IconRefresh = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        );
+        const IconCheck = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"/></svg>
+        );
+
+        // --- UI COMPONENTS ---
+
+        const Card = ({ children, className = "" }) => (
+            <div className={`glass-card rounded-xl overflow-hidden ${className}`}>
+                {children}
+            </div>
+        );
+
+        const Button = ({ children, onClick, variant = 'primary', className = "", disabled = false, fullWidth = false }) => {
+            const baseStyle = "px-4 py-2 rounded-lg font-bold transition-all duration-200 flex items-center justify-center gap-2 tracking-wide";
+            
+            const variants = {
+                primary: "btn-gradient text-white disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none",
+                outline: "border-2 border-violet-200 text-violet-600 hover:bg-violet-50 bg-transparent",
+                ghost: "text-gray-400 hover:text-red-500 hover:bg-red-50 p-2",
+                secondary: "bg-violet-100 text-violet-700 hover:bg-violet-200 border border-violet-200"
+            };
+            
+            return (
+                <button 
+                onClick={onClick} 
+                disabled={disabled}
+                className={`${baseStyle} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}
+                >
+                {children}
+                </button>
+            );
+        };
+
+        const ToggleGroup = ({ options, value, onChange, label }) => (
+            <div className="flex flex-col gap-2 mb-6">
+                {label && <span className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">{label}</span>}
+                <div className="flex p-1 bg-gray-100 rounded-lg border border-gray-200">
+                {options.map((option) => (
+                    <button
+                    key={option.value}
+                    onClick={() => onChange(option.value)}
+                    className={`flex-1 py-2 px-4 rounded-md text-sm font-bold transition-all duration-200 ${
+                        value === option.value
+                        ? 'bg-white text-violet-600 shadow-sm border border-gray-100'
+                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                    }`}
+                    >
+                    {option.label}
+                    </button>
+                ))}
+                </div>
+            </div>
+        );
+
+        const Input = ({ label, placeholder, value, onChange, type = "text", rightElement, className = "", bottomElement, topRightElement }) => (
+            <div className={`flex flex-col gap-2 ${className}`}>
+                <div className="flex justify-between items-end">
+                    {label && <label className="text-xs font-bold text-gray-500 uppercase tracking-wider ml-1">{label}</label>}
+                    {topRightElement}
+                </div>
+                <div className="relative group">
+                <input
+                    type={type}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    className="w-full bg-white ink-input rounded-lg py-3 px-4 font-mono text-sm placeholder:text-gray-400 text-gray-800"
+                />
+                {rightElement && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    {rightElement}
+                    </div>
+                )}
+                </div>
+                {bottomElement}
+            </div>
+        );
+
+        // --- MAIN APPLICATION ---
+
+        function App() {
+            const [tokenType, setTokenType] = useState('ERC20');
+            const [mode, setMode] = useState('FIXED');
+            const [inputMethod, setInputMethod] = useState('MANUAL');
+            const [fixedAmount, setFixedAmount] = useState('');
+            const [recipients, setRecipients] = useState([{ address: '', amount: '', tokenId: '' }]);
+            const [tokenAddress, setTokenAddress] = useState('');
+            const [walletConnected, setWalletConnected] = useState(false);
+            const [userAddress, setUserAddress] = useState('');
+            const [isDragOver, setIsDragOver] = useState(false);
+            const [errorMsg, setErrorMsg] = useState(null);
+            const [chainId, setChainId] = useState(null);
+            
+            // Token Data
+            const [tokenSymbol, setTokenSymbol] = useState('');
+            const [tokenDecimals, setTokenDecimals] = useState(18);
+            const [userBalance, setUserBalance] = useState(null);
+            const [isFetchingToken, setIsFetchingToken] = useState(false);
+            const [tokenError, setTokenError] = useState(null);
+
+            // NFT ID Fetching
+            const [ownedTokenIds, setOwnedTokenIds] = useState([]);
+            const [isLoadingIds, setIsLoadingIds] = useState(false);
+
+            // User Token List (Dropdown)
+            const [userTokens, setUserTokens] = useState([]);
+            const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+            const [isLoadingUserTokens, setIsLoadingUserTokens] = useState(false);
+            const dropdownRef = useRef(null);
+
+            // Safe Balance Formatter to prevent crashes
+            const safeFormatBalance = (balance, decimals) => {
+                try {
+                    if (!balance) return '0';
+                    const d = (decimals === null || decimals === undefined) ? 18 : Number(decimals);
+                    const formatted = ethers.formatUnits(balance, d);
+                    return parseFloat(formatted).toLocaleString(undefined, { maximumFractionDigits: 4 });
+                } catch (err) {
+                    console.error("Format balance error:", err);
+                    return 'Error';
+                }
+            };
+
+            // Handlers
+            const handleAddRecipient = () => {
+                if (recipients.length > 500) {
+                    setErrorMsg("Maximum manual recipient limit reached (500). Use CSV for larger batches.");
+                    return;
+                }
+                setRecipients([...recipients, { address: '', amount: '', tokenId: '' }]);
+                setErrorMsg(null);
+            };
+
+            const handleRemoveRecipient = (index) => {
+                const newRecipients = recipients.filter((_, i) => i !== index);
+                setRecipients(newRecipients.length ? newRecipients : [{ address: '', amount: '', tokenId: '' }]);
+            };
+
+            const handleRecipientChange = (index, field, value) => {
+                const newRecipients = [...recipients];
+                newRecipients[index][field] = value;
+                setRecipients(newRecipients);
+            };
+
+            const clearAll = () => {
+                setRecipients([{ address: '', amount: '', tokenId: '' }]);
+                setFixedAmount('');
+                setErrorMsg(null);
+                setTokenError(null);
+            };
+
+            const removeDuplicates = () => {
+                const unique = new Map();
+                let duplicatesFound = 0;
+                
+                recipients.forEach(r => {
+                    if (r.address && r.address.trim() !== "") {
+                        // Create a unique key based on address + tokenId (if applicable)
+                        const key = `${r.address.toLowerCase()}-${r.tokenId || '0'}`;
+                        if (!unique.has(key)) {
+                            unique.set(key, r);
+                        } else {
+                            duplicatesFound++;
+                        }
+                    }
+                });
+                
+                if (duplicatesFound > 0) {
+                    setRecipients(Array.from(unique.values()));
+                    setErrorMsg(null); // Clear errors
+                }
+            };
+
+            // Detect Token Standard
+            const detectTokenStandard = async (address, provider) => {
+                const erc165Abi = ["function supportsInterface(bytes4 interfaceId) view returns (bool)"];
+                const erc721InterfaceId = "0x80ac58cd";
+                const erc1155InterfaceId = "0xd9b67a26";
+                
+                try {
+                    const contract = new ethers.Contract(address, erc165Abi, provider);
+                    try {
+                        const is721 = await contract.supportsInterface(erc721InterfaceId);
+                        if (is721) return 'ERC721';
+                    } catch (e) {}
+
+                    try {
+                        const is1155 = await contract.supportsInterface(erc1155InterfaceId);
+                        if (is1155) return 'ERC1155';
+                    } catch (e) {}
+
+                    const code = await provider.getCode(address);
+                    if (code !== '0x') return 'ERC20';
+                    
+                    return 'UNKNOWN';
+                } catch (error) {
+                    const code = await provider.getCode(address);
+                    if (code !== '0x') return 'ERC20';
+                    return 'UNKNOWN';
+                }
+            };
+
+            // Fetch Token Symbol & Balance when address changes
+            useEffect(() => {
+                let isActive = true;
+                setTokenError(null);
+                setUserBalance(null); // Reset balance on new token
+                setOwnedTokenIds([]); // Reset specific IDs
+
+                const fetchTokenData = async () => {
+                    if (!tokenAddress || !ethers.isAddress(tokenAddress)) {
+                        setTokenSymbol('');
+                        return;
+                    }
+
+                    setIsFetchingToken(true);
+                    try {
+                        const provider = new ethers.JsonRpcProvider(INK_RPC_URL);
+                        
+                        // 1. Check Standard
+                        const detectedStandard = await detectTokenStandard(tokenAddress, provider);
+                        
+                        if (isActive) {
+                            if (detectedStandard !== 'UNKNOWN' && detectedStandard !== tokenType) {
+                                setTokenError(`Wrong token standard (Detected ${detectedStandard}). Please switch tabs.`);
+                            } else {
+                                setTokenError(null);
+                            }
+                        }
+
+                        // 2. Get Symbol & Decimals & Balance
+                        const abi = [
+                            "function symbol() view returns (string)",
+                            "function decimals() view returns (uint8)",
+                            "function balanceOf(address) view returns (uint256)"
+                        ];
+                        const contract = new ethers.Contract(tokenAddress, abi, provider);
+
+                        // Fetch Symbol
+                        try {
+                            const symbol = await contract.symbol();
+                            if (isActive) setTokenSymbol(symbol);
+                        } catch (e) {
+                             if (isActive) setTokenSymbol(detectedStandard);
+                        }
+
+                        // Fetch Decimals (ERC20 only usually)
+                        let decimals = 18; // Default
+                        if (detectedStandard === 'ERC20') {
+                            try {
+                                decimals = await contract.decimals();
+                            } catch(e) {}
+                        }
+                        if (isActive) setTokenDecimals(decimals);
+
+                        // Fetch User Balance (If wallet connected)
+                        if (userAddress) {
+                            try {
+                                // For ERC1155 balanceOf requires ID, so we skip simple balance check for generic 1155
+                                if (detectedStandard !== 'ERC1155') {
+                                    const rawBalance = await contract.balanceOf(userAddress);
+                                    if (isActive) {
+                                        if (detectedStandard === 'ERC721') {
+                                            setUserBalance(Number(rawBalance)); // Count
+                                        } else {
+                                            // ERC20
+                                            setUserBalance(ethers.formatUnits(rawBalance, decimals));
+                                        }
+                                    }
+                                }
+                            } catch(e) {
+                                console.log("Balance fetch failed", e);
+                            }
+                        }
+
+                    } catch (error) {
+                        console.warn("Could not fetch token data:", error);
+                        if (isActive) setTokenSymbol('UNKNOWN');
+                    } finally {
+                        if (isActive) setIsFetchingToken(false);
+                    }
+                };
+
+                const timeoutId = setTimeout(() => fetchTokenData(), 500);
+                return () => { isActive = false; clearTimeout(timeoutId); };
+            }, [tokenAddress, tokenType, userAddress]);
+
+            // --- FETCH SPECIFIC NFT IDS ---
+            // Hybrid Strategy: API first, Log Scan fallback
+            useEffect(() => {
+                // Validation - if invalid, ensure no IDs shown
+                if (!walletConnected || !userAddress || !ethers.isAddress(tokenAddress)) {
+                    return;
+                }
+                if (tokenType === 'ERC20') {
+                    setOwnedTokenIds([]);
+                    return;
+                }
+
+                // 1. IMMEDIATE LOADING STATE
+                // This prevents the "No IDs found" flicker by showing "Scanning..." immediately
+                setIsLoadingIds(true);
+                setOwnedTokenIds([]);
+
+                const fetchIds = async () => {
+                    const provider = new ethers.JsonRpcProvider(INK_RPC_URL);
+                    const paddedAddress = ethers.zeroPadValue(userAddress, 32);
+                    const idsToCheck = new Set();
+                    let apiSuccess = false;
+
+                    // 1. Try Explorer API (Best for history coverage)
+                    try {
+                        const action = tokenType === 'ERC721' ? 'tokennfttx' : 'token1155tx';
+                        // Standard Blockscout/Etherscan style endpoint
+                        const url = `${INK_EXPLORER_URL}/api?module=account&action=${action}&address=${userAddress}&contractaddress=${tokenAddress}&sort=desc&page=1&offset=100`;
+                        
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        
+                        if (data.status === '1' && Array.isArray(data.result)) {
+                            apiSuccess = true;
+                            data.result.forEach(tx => {
+                                // Explorer API usually returns 'tokenID' or 'tokenID'
+                                const id = tx.tokenID || tx.tokenId;
+                                if (id) idsToCheck.add(id.toString());
+                            });
+                        }
+                    } catch (e) {
+                        console.warn("API scan failed or not supported, attempting log scan.", e);
+                    }
+
+                    // 2. Fallback: Log Scan (If API failed or returned nothing, try recent logs)
+                    if (!apiSuccess || idsToCheck.size === 0) {
+                        try {
+                            // 1. Scan for incoming transfers to user
+                            if (tokenType === 'ERC721') {
+                                const filter = {
+                                    address: tokenAddress,
+                                    fromBlock: 0, 
+                                    toBlock: 'latest',
+                                    topics: [
+                                        '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+                                        null, // from
+                                        paddedAddress // to
+                                    ]
+                                };
+                                const logs = await provider.getLogs(filter);
+                                logs.forEach(log => {
+                                    if (log.topics.length >= 4) {
+                                        idsToCheck.add(ethers.getBigInt(log.topics[3]).toString());
+                                    }
+                                });
+                            } else if (tokenType === 'ERC1155') {
+                                const filterSingle = {
+                                    address: tokenAddress,
+                                    fromBlock: 0,
+                                    toBlock: 'latest',
+                                    topics: [
+                                        '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62',
+                                        null, // operator
+                                        null, // from
+                                        paddedAddress // to
+                                    ]
+                                };
+                                const logs = await provider.getLogs(filterSingle);
+                                const iface = new ethers.Interface([
+                                    "event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)"
+                                ]);
+                                
+                                logs.forEach(log => {
+                                    try {
+                                        const parsed = iface.parseLog(log);
+                                        if (parsed) idsToCheck.add(parsed.args.id.toString());
+                                    } catch(e) {}
+                                });
+                            }
+                        } catch (e) {
+                            console.warn("Log scan fallback failed (likely RPC limit)", e);
+                        }
+                    }
+
+                    // 3. Verify ownership (CRITICAL: Filter out sold/transferred items)
+                    const candidates = Array.from(idsToCheck);
+                    const verifiedIds = [];
+                    
+                    // Limit concurrency
+                    const chunkSize = 10;
+                    for (let i = 0; i < candidates.length; i += chunkSize) {
+                        const chunk = candidates.slice(i, i + chunkSize);
+                        await Promise.all(chunk.map(async (id) => {
+                            try {
+                                const contract = new ethers.Contract(tokenAddress, [
+                                    "function ownerOf(uint256) view returns (address)",
+                                    "function balanceOf(address, uint256) view returns (uint256)"
+                                ], provider);
+
+                                if (tokenType === 'ERC721') {
+                                    const owner = await contract.ownerOf(id);
+                                    if (owner.toLowerCase() === userAddress.toLowerCase()) {
+                                        verifiedIds.push(id);
+                                    }
+                                } else {
+                                    const bal = await contract.balanceOf(userAddress, id);
+                                    if (bal > 0n) {
+                                        verifiedIds.push(id);
+                                    }
+                                }
+                            } catch (e) { /* ignore, likely burned or error */ }
+                        }));
+                    }
+                    
+                    // Sort numerically
+                    verifiedIds.sort((a, b) => {
+                        try { return Number(a) - Number(b); } catch(e) { return 0; }
+                    });
+
+                    setOwnedTokenIds(verifiedIds);
+                    setIsLoadingIds(false);
+                };
+                
+                // Debounce
+                const timer = setTimeout(fetchIds, 1000);
+                return () => clearTimeout(timer);
+            }, [tokenAddress, tokenType, userAddress, walletConnected]);
+
+
+            // Handler for clicking a chip
+            const handleSelectTokenId = (id) => {
+                const newRecipients = [...recipients];
+                
+                // 1. Find the first row where tokenId is empty
+                const emptyIndex = newRecipients.findIndex(r => !r.tokenId || r.tokenId.trim() === '');
+                
+                if (emptyIndex !== -1) {
+                    newRecipients[emptyIndex].tokenId = id;
+                } else {
+                    // 2. If no empty rows, add a new one
+                    if (newRecipients.length >= 500) {
+                        setErrorMsg("Limit reached.");
+                        return;
+                    }
+                    newRecipients.push({ address: '', amount: '', tokenId: id });
+                }
+                
+                setRecipients(newRecipients);
+            };
+
+            // --- TOKEN DROPDOWN LOGIC ---
+            
+            // Helper to get contract info
+            const getContractInfo = async (contractAddress, provider) => {
+                try {
+                    const abi = [
+                        "function symbol() view returns (string)",
+                        "function name() view returns (string)",
+                        "function decimals() view returns (uint8)",
+                        "function balanceOf(address) view returns (uint256)",
+                        "function supportsInterface(bytes4 interfaceId) view returns (bool)"
+                    ];
+                    const contract = new ethers.Contract(contractAddress, abi, provider);
+                    
+                    // Check balance first to fail fast. 
+                    // Note: This fails for ERC1155 usually because balanceOf needs an ID, 
+                    // but we can catch it.
+                    let balance = 0n;
+                    try {
+                        balance = await contract.balanceOf(userAddress);
+                    } catch (e) {
+                        // Likely ERC1155 or requires args. We continue anyway to check Interface.
+                        // We will set balance to 0 temporarily if it failed.
+                    }
+                    
+                    // Determine type (loose check)
+                    let type = 'ERC20';
+                    try {
+                        const is721 = await contract.supportsInterface("0x80ac58cd");
+                        if (is721) {
+                             type = 'ERC721';
+                        } else {
+                            // Check 1155 if not 721
+                            const is1155 = await contract.supportsInterface("0xd9b67a26");
+                            if (is1155) type = 'ERC1155';
+                        }
+                    } catch(e) {}
+
+                    const [symbol, name, decimals] = await Promise.all([
+                        contract.symbol().catch(() => '???'),
+                        contract.name().catch(() => 'Unknown'),
+                        type === 'ERC20' ? contract.decimals().catch(() => 18) : Promise.resolve(0)
+                    ]);
+
+                    return {
+                        address: contractAddress,
+                        symbol,
+                        name,
+                        type,
+                        balance: balance.toString(),
+                        decimals
+                    };
+                } catch (e) {
+                    return null;
+                }
+            };
+
+            const fetchUserTokens = async (address) => {
+                if (!address) return;
+                setIsLoadingUserTokens(true);
+                setUserTokens([]); // Clear previous
+                
+                const cleanAddress = address.toLowerCase();
+                const provider = new ethers.JsonRpcProvider(INK_RPC_URL);
+                const foundTokens = new Map();
+
+                // 1. SCAN LOGS (The robust "other way")
+                try {
+                    const paddedAddress = ethers.zeroPadValue(address, 32);
+                    
+                    // Filter 1: ERC20/721 Transfer(from, to, value)
+                    const filterTransfer = {
+                        fromBlock: 0, 
+                        toBlock: 'latest',
+                        topics: [
+                            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+                            null, // from (any)
+                            paddedAddress // to (user)
+                        ]
+                    };
+
+                    // Filter 2: ERC1155 TransferSingle(operator, from, to, id, value)
+                    const filterSingle = {
+                        fromBlock: 0,
+                        toBlock: 'latest',
+                        topics: [
+                            '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62',
+                            null, // operator
+                            null, // from
+                            paddedAddress // to
+                        ]
+                    };
+                    
+                    // Execute scans (parallel)
+                    const [logsTransfer, logsSingle] = await Promise.all([
+                        provider.getLogs(filterTransfer).catch(()=>[]),
+                        provider.getLogs(filterSingle).catch(()=>[])
+                    ]);
+
+                    const allLogs = [...logsTransfer, ...logsSingle];
+                    const uniqueContracts = [...new Set(allLogs.map(l => l.address))];
+                    
+                    // Verify balances for found contracts
+                    // Limit concurrent requests to avoid rate limits
+                    const chunkSize = 5;
+                    for (let i = 0; i < uniqueContracts.length; i += chunkSize) {
+                        const chunk = uniqueContracts.slice(i, i + chunkSize);
+                        const results = await Promise.all(chunk.map(addr => getContractInfo(addr, provider)));
+                        
+                        results.forEach(res => {
+                            if (res) foundTokens.set(res.address.toLowerCase(), res);
+                        });
+                        
+                        // Progressive update
+                        setUserTokens(Array.from(foundTokens.values()));
+                    }
+
+                } catch (e) {
+                    console.warn("Log scan failed:", e);
+                }
+
+                // 2. API FALLBACK
+                try {
+                    const response = await fetch(`${INK_EXPLORER_URL}/api?module=account&action=tokenlist&address=${cleanAddress}`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (response.ok) {
+                         const json = await response.json();
+                         if (json.status === '1' && Array.isArray(json.result)) {
+                             // Process API results - Don't assume ERC20 blindly anymore
+                             // We want to verify them if they aren't already in our map
+                             const newCandidates = json.result.filter(t => !foundTokens.has(t.contractAddress.toLowerCase()));
+                             
+                             // Quick verify chunk
+                             const results = await Promise.all(newCandidates.map(async t => {
+                                 // Try to use getContractInfo to get real type
+                                 const info = await getContractInfo(t.contractAddress, provider);
+                                 if (info) return info;
+                                 
+                                 // Fallback to API data if verification fails but it exists
+                                 return {
+                                     address: t.contractAddress,
+                                     symbol: t.symbol || '???',
+                                     name: t.name || 'Unknown',
+                                     type: 'ERC20', // Default if we really can't tell
+                                     balance: t.balance,
+                                     decimals: t.decimals
+                                 };
+                             }));
+
+                             results.forEach(res => {
+                                 if (res) foundTokens.set(res.address.toLowerCase(), res);
+                             });
+                         }
+                    }
+                } catch(e) { /* ignore */ }
+
+                setUserTokens(Array.from(foundTokens.values()));
+                setIsLoadingUserTokens(false);
+            };
+
+            // Trigger fetch on auth
+            useEffect(() => {
+                if (walletConnected && userAddress) {
+                    fetchUserTokens(userAddress);
+                } else {
+                    setUserTokens([]);
+                }
+            }, [walletConnected, userAddress]);
+
+            // Click outside handler for dropdown
+            useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                        setIsDropdownOpen(false);
+                    }
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
+            }, []);
+
+            // Auto-connect logic
+            useEffect(() => {
+                const attemptAutoConnect = async () => {
+                    if (window.ethereum) {
+                        try {
+                            const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                            if (accounts.length > 0) {
+                                setUserAddress(accounts[0]);
+                                setWalletConnected(true);
+                                const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+                                setChainId(parseInt(chainIdHex, 16));
+                            }
+                        } catch (e) {
+                            console.log("Auto-connect error:", e);
+                        }
+                    }
+                };
+                attemptAutoConnect();
+            }, []);
+
+            // Filter tokens for dropdown
+            const filteredUserTokens = useMemo(() => {
+                return userTokens.filter(t => {
+                    if (tokenType === 'ERC20') return t.type === 'ERC20';
+                    if (tokenType === 'ERC721') return t.type === 'ERC721';
+                    if (tokenType === 'ERC1155') return t.type === 'ERC1155';
+                    return false;
+                });
+            }, [userTokens, tokenType]);
+
+
+            const processCSV = (content) => {
+                try {
+                    const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
+                    
+                    if (lines.length > 5000) {
+                        setErrorMsg("CSV too large. Please limit to 5000 rows.");
+                        return;
+                    }
+
+                    const parsed = lines.map(line => {
+                        const parts = line.split(',');
+                        if (tokenType === 'ERC20') {
+                            return {
+                                address: parts[0]?.trim().substring(0, 66) || '', 
+                                amount: parts[1]?.trim().substring(0, 20) || '',
+                                tokenId: ''
+                            };
+                        } else if (tokenType === 'ERC721') {
+                             return {
+                                address: parts[0]?.trim().substring(0, 66) || '', 
+                                tokenId: parts[1]?.trim().substring(0, 20) || '',
+                                amount: '1'
+                            };
+                        } else {
+                            return {
+                                address: parts[0]?.trim().substring(0, 66) || '', 
+                                tokenId: parts[1]?.trim().substring(0, 20) || '',
+                                amount: parts[2]?.trim().substring(0, 20) || ''
+                            };
+                        }
+                    });
+                    setRecipients(parsed);
+                    setInputMethod('MANUAL');
+                    setErrorMsg(null);
+                } catch (e) {
+                    setErrorMsg("Failed to parse CSV file.");
+                }
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (file.size > 1024 * 1024) {
+                        setErrorMsg("File too large. Maximum size is 1MB.");
+                        return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = (e) => processCSV(e.target.result);
+                    reader.onerror = () => setErrorMsg("Error reading file.");
+                    reader.readAsText(file);
+                }
+            };
+
+            const recipientCount = recipients.filter(r => r.address.length > 0).length;
+            
+            const totalTokens = useMemo(() => {
+                if (tokenType === 'ERC721') return recipientCount;
+                if (mode === 'FIXED') {
+                    const amount = parseFloat(fixedAmount) || 0;
+                    return amount * recipientCount;
+                } else {
+                    return recipients.reduce((acc, curr) => acc + (parseFloat(curr.amount) || 0), 0);
+                }
+            }, [tokenType, mode, fixedAmount, recipients, recipientCount]);
+
+            // Calculate if balance is sufficient
+            const hasInsufficientBalance = useMemo(() => {
+                if (userBalance === null) return false; // Not checked yet
+                if (tokenType === 'ERC1155') return false; // Complex check skipped
+                return parseFloat(userBalance) < totalTokens;
+            }, [userBalance, totalTokens, tokenType]);
+
+            const switchNetwork = async () => {
+                if (!window.ethereum) return;
+                try {
+                    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: INK_CHAIN_ID_HEX }] });
+                    const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+                    setChainId(parseInt(chainIdHex, 16));
+                } catch (switchError) {
+                    if (switchError.code === 4902) {
+                        try {
+                            await window.ethereum.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                    chainId: INK_CHAIN_ID_HEX, chainName: 'Ink', rpcUrls: [INK_RPC_URL], blockExplorerUrls: [INK_EXPLORER_URL],
+                                    nativeCurrency: { name: 'Ethereum', symbol: 'ETH', decimals: 18 }
+                                }],
+                            });
+                            const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+                            setChainId(parseInt(chainIdHex, 16));
+                        } catch (addError) { setErrorMsg("Failed to add Ink network."); }
+                    } else { setErrorMsg("Failed to switch to Ink network."); }
+                }
+            };
+
+            const connectWallet = async () => {
+                if (window.ethereum) {
+                    try {
+                        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                        if(accounts.length > 0) {
+                            setWalletConnected(true);
+                            setUserAddress(accounts[0]);
+                            const chainIdHex = await window.ethereum.request({ method: 'eth_chainId' });
+                            const currentChain = parseInt(chainIdHex, 16);
+                            setChainId(currentChain);
+                            if (currentChain !== INK_CHAIN_ID_DEC) await switchNetwork();
+                        }
+                    } catch (e) { setErrorMsg("Wallet connection denied."); }
+                } else { setErrorMsg("No wallet found. Please install Rabby or MetaMask."); }
+            };
+
+            const disconnectWallet = () => {
+                setWalletConnected(false);
+                setUserAddress('');
+                setChainId(null);
+                setUserBalance(null);
+                setUserTokens([]);
+            };
+            
+            useEffect(() => {
+                if (window.ethereum) {
+                    window.ethereum.on('chainChanged', (newChainId) => {
+                        setChainId(parseInt(newChainId, 16));
+                        window.location.reload();
+                    });
+                    window.ethereum.on('accountsChanged', (accounts) => {
+                        if (accounts.length > 0) {
+                            setUserAddress(accounts[0]);
+                            setWalletConnected(true);
+                        } else {
+                            disconnectWallet();
+                        }
+                    });
+                }
+            }, []);
+
+            const handleExecuteAirdrop = async () => {
+                if (!walletConnected) { await connectWallet(); return; }
+                if (chainId !== INK_CHAIN_ID_DEC) { await switchNetwork(); return; }
+                if (!ethers.isAddress(tokenAddress)) { setErrorMsg("Invalid Token Address."); return; }
+                
+                const validRecipients = recipients.filter(r => ethers.isAddress(r.address));
+                if (validRecipients.length === 0) { setErrorMsg("No valid recipient addresses found."); return; }
+
+                if (hasInsufficientBalance) { setErrorMsg("Insufficient token balance for this airdrop."); return; }
+
+                const addressList = validRecipients.map(r => r.address);
+                
+                let callDetails = "";
+                let fnName = "";
+
+                if (tokenType === 'ERC20') {
+                     fnName = "disperseERC20";
+                     const amountList = mode === 'FIXED' ? validRecipients.map(() => fixedAmount) : validRecipients.map(r => r.amount);
+                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\nvalues: ${JSON.stringify(amountList)}`;
+                } else if (tokenType === 'ERC721') {
+                     fnName = "disperseERC721";
+                     const idList = validRecipients.map(r => r.tokenId);
+                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\ntokenIds: ${JSON.stringify(idList)}`;
+                } else if (tokenType === 'ERC1155') {
+                     fnName = "disperseERC1155";
+                     const idList = validRecipients.map(r => r.tokenId);
+                     const amountList = mode === 'FIXED' ? validRecipients.map(() => fixedAmount) : validRecipients.map(r => r.amount);
+                     callDetails = `Function: ${fnName}\n\nrecipients: ${JSON.stringify(addressList)}\nids: ${JSON.stringify(idList)}\nvalues: ${JSON.stringify(amountList)}`;
+                }
+
+                alert(`Ready to Airdrop on Ink L2!\n\nStandard: ${tokenType}\nRecipients: ${addressList.length}\n\nContract Interaction Data:\n${callDetails}\n\n(This data should be passed to the smart contract)`);
+            };
+
+            const getCsvExample = () => {
+                if (tokenType === 'ERC20') return `0x123...abc, 100 (Qty)\n0x456...def, 250 (Qty)`;
+                if (tokenType === 'ERC721') return `0x123...abc, 1 (Token ID)\n0x456...def, 55 (Token ID)`;
+                return `0x123...abc, 1001 (ID), 50 (Qty)\n0x456...def, 1002 (ID), 1 (Qty)`;
+            };
+
+            return (
+                <div>
+                    <nav className="border-b border-white/20 bg-white/10 backdrop-blur-md sticky top-0 z-50">
+                        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <a href="index.html" className="text-2xl font-bold graffiti-title tracking-wider hover:opacity-80 transition" style={{ textShadow: '2px 2px #9333ea' }}>
+                                    BERT<span className="text-white">DROPPER</span>
+                                </a>
+                                {chainId === INK_CHAIN_ID_DEC && (
+                                    <span className="hidden sm:inline-block bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full border border-white/30">
+                                        Ink L2 Active
+                                    </span>
+                                )}
+                            </div>
+                            <Button 
+                                variant={walletConnected ? 'secondary' : 'primary'} 
+                                onClick={connectWallet}
+                                className="text-sm shadow-md"
+                            >
+                                <IconWallet size={16} />
+                                {walletConnected ? 'Connected' : 'Connect Wallet'}
+                            </Button>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-3xl mx-auto px-4 py-8">
+                        <div className="text-center mb-8 flex flex-col md:flex-row items-center justify-center gap-6">
+                            <div className="text-center md:text-right">
+                                <h2 className="text-4xl text-white font-handwritten mb-2" style={{ textShadow: '2px 2px 0px #9333ea' }}>
+                                    Batch Distribution
+                                </h2>
+                                <p className="text-white/90 font-medium text-lg">Send tokens to multiple frens in one go.</p>
+                            </div>
+                            <img src="logo.png" alt="Bertdropper Logo" className="w-24 h-24 object-contain drop-shadow-xl animate-in fade-in zoom-in duration-500" onError={(e) => e.target.style.display = 'none'} />
+                        </div>
+
+                        <Card className="p-6 md:p-8">
+                            {errorMsg && (
+                                <div className="mb-6 p-3 bg-red-100 border border-red-300 rounded-lg flex items-center gap-2 text-red-700 text-sm font-bold animate-pulse">
+                                    <IconAlert size={16} />
+                                    {errorMsg}
+                                </div>
+                            )}
+                            {walletConnected && chainId !== INK_CHAIN_ID_DEC && (
+                                 <div className="mb-6 p-3 bg-yellow-100 border border-yellow-300 rounded-lg flex items-center justify-between gap-2 text-yellow-800 text-sm font-bold">
+                                    <div className="flex items-center gap-2">
+                                        <IconAlert size={16} />
+                                        <span>Wrong Network. Please switch to Ink L2.</span>
+                                    </div>
+                                    <button onClick={switchNetwork} className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded text-xs transition">Switch Now</button>
+                                </div>
+                            )}
+
+                            {walletConnected && userAddress && (
+                                <div className="mb-6 px-4 py-3 bg-violet-50 border border-violet-200 rounded-lg flex flex-col gap-2 text-violet-900 text-sm font-bold animate-in fade-in shadow-inner">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs font-bold text-violet-800 uppercase tracking-wide">Connected As</p>
+                                        </div>
+                                        <button onClick={disconnectWallet} className="bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold px-3 py-1.5 rounded transition shadow-sm">
+                                            Disconnect
+                                        </button>
+                                    </div>
+                                    <div className="font-mono text-sm font-bold text-gray-800 break-all">
+                                        {userAddress}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                                <ToggleGroup label="Token Standard" value={tokenType} onChange={setTokenType}
+                                    options={[{ label: 'ERC20', value: 'ERC20' }, { label: 'ERC721', value: 'ERC721' }, { label: 'ERC1155', value: 'ERC1155' }]} />
+                                
+                                <div className={`transition-opacity duration-300 ${tokenType === 'ERC721' ? 'opacity-20 pointer-events-none grayscale' : 'opacity-100'}`}>
+                                    <ToggleGroup label="Distribution Mode" value={mode} onChange={setMode}
+                                        options={[{ label: 'Fixed Amount', value: 'FIXED' }, { label: 'Variable Amount', value: 'VARIABLE' }]} />
+                                </div>
+                            </div>
+
+                            <div className="mb-8" ref={dropdownRef}>
+                                <Input label="Token Address" placeholder="0x..." value={tokenAddress} onChange={setTokenAddress}
+                                    topRightElement={
+                                        walletConnected && (
+                                            <div className="relative">
+                                                <button 
+                                                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                                    className="text-xs font-bold text-violet-600 bg-violet-50 hover:bg-violet-100 px-2 py-1 rounded flex items-center gap-1 transition-colors"
+                                                >
+                                                    {isLoadingUserTokens ? 'Scanning Chain...' : 'Select from Wallet'}
+                                                    <IconChevronDown size={14} />
+                                                </button>
+                                                
+                                                {/* DROPDOWN MENU */}
+                                                {isDropdownOpen && (
+                                                    <div className="absolute right-0 top-full mt-2 w-64 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-50 custom-scrollbar animate-in fade-in zoom-in-95 duration-200">
+                                                        <div className="p-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                                                            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                                                Your {tokenType} Tokens
+                                                            </span>
+                                                            <button onClick={() => fetchUserTokens(userAddress)} className="text-violet-500 hover:text-violet-700 transition">
+                                                                <IconRefresh size={14} className={isLoadingUserTokens ? 'animate-spin' : ''} />
+                                                            </button>
+                                                        </div>
+                                                        {isLoadingUserTokens ? (
+                                                            <div className="p-4 text-center text-xs text-gray-400">Scanning blockchain for tokens... This may take a moment.</div>
+                                                        ) : filteredUserTokens.length > 0 ? (
+                                                            filteredUserTokens.map((t, idx) => (
+                                                                <button
+                                                                    key={`${t.address}-${idx}`}
+                                                                    onClick={() => {
+                                                                        setTokenAddress(t.address);
+                                                                        setIsDropdownOpen(false);
+                                                                    }}
+                                                                    className="w-full text-left p-2 hover:bg-violet-50 transition-colors border-b border-gray-50 last:border-0"
+                                                                >
+                                                                    <div className="text-sm font-bold text-gray-800">{t.symbol}</div>
+                                                                    <div className="text-xs text-gray-400 font-mono truncate">{t.address.slice(0, 6)}...{t.address.slice(-4)}</div>
+                                                                    <div className="text-xs text-violet-500 font-mono mt-0.5">
+                                                                        {tokenType === 'ERC1155' ? 'Collection' : (tokenType === 'ERC721' ? `Bal: ${t.balance}` : `Bal: ${safeFormatBalance(t.balance, t.decimals)}`)}
+                                                                    </div>
+                                                                </button>
+                                                            ))
+                                                        ) : (
+                                                            <div className="p-4 text-center text-xs text-gray-400 flex flex-col items-center gap-2">
+                                                                <span>No tokens found.</span>
+                                                                <span className="text-[10px] text-gray-300">Try refreshing if you recently received funds.</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    }
+                                    rightElement={
+                                        tokenAddress.length > 0 && (
+                                            <div className={`flex items-center gap-2 py-1 px-2 rounded text-xs font-bold border transition-colors ${
+                                                isFetchingToken ? 'bg-gray-100 text-gray-500 border-gray-200' : tokenSymbol === 'UNKNOWN' ? 'bg-red-100 text-red-500 border-red-200' : 'bg-violet-100 text-violet-600 border-violet-200'
+                                            }`}>
+                                                {isFetchingToken ? ( <span className="animate-spin h-3 w-3 border-2 border-gray-500 border-t-transparent rounded-full"></span> ) : ( <span className={`w-2 h-2 rounded-full ${tokenSymbol === 'UNKNOWN' ? 'bg-red-400' : 'bg-green-400 animate-pulse'}`}></span> )}
+                                                {isFetchingToken ? 'Checking...' : (tokenSymbol || 'Invalid')}
+                                            </div>
+                                        )
+                                    }
+                                    bottomElement={
+                                        <div>
+                                            {/* Specific Token IDs Chips */}
+                                            {walletConnected && (tokenType === 'ERC721' || tokenType === 'ERC1155') && tokenAddress.length > 10 && (
+                                                <div className="mt-2 pt-2 border-t border-dashed border-gray-200">
+                                                     <div className="flex items-center justify-between mb-1.5">
+                                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                                                            Your IDs
+                                                            {isLoadingIds && <span className="ml-1 opacity-50 font-normal normal-case animate-pulse">(Scanning...)</span>}
+                                                            {!isLoadingIds && ownedTokenIds.length > 0 && <span className="ml-1 text-violet-500">({ownedTokenIds.length})</span>}
+                                                        </span>
+                                                    </div>
+                                                    
+                                                    {isLoadingIds && ownedTokenIds.length === 0 ? (
+                                                        <div className="h-6 w-full bg-gray-100 animate-pulse rounded"></div>
+                                                    ) : ownedTokenIds.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto custom-scrollbar p-1">
+                                                            {ownedTokenIds.map(id => {
+                                                                // Check if this ID is already used in recipients list
+                                                                const isUsed = recipients.some(r => r.tokenId === id);
+                                                                return (
+                                                                    <button
+                                                                        key={id}
+                                                                        onClick={() => handleSelectTokenId(id)}
+                                                                        className={`text-[10px] font-mono px-2 py-1 rounded-md border transition-all duration-200 ${
+                                                                            isUsed 
+                                                                            ? 'bg-violet-100 text-violet-600 border-violet-300 shadow-inner'
+                                                                            : 'bg-white text-gray-600 border-gray-200 hover:border-violet-400 hover:text-violet-600 hover:shadow-sm'
+                                                                        }`}
+                                                                    >
+                                                                        #{id.length > 8 ? id.slice(0,4) + '...' + id.slice(-3) : id}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-xs text-gray-400 italic pl-1">
+                                                            {isFetchingToken ? 'Waiting for check...' : 'No specific IDs found in recent history.'}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            
+                                            {userBalance !== null && !isFetchingToken && (
+                                                <div className="flex justify-end mt-2">
+                                                    <div className={`text-xs font-bold flex items-center gap-1 ${hasInsufficientBalance ? 'text-red-500' : 'text-violet-600'}`}>
+                                                        <span>Your Balance:</span>
+                                                        <span className="font-mono">{userBalance}</span>
+                                                        <span>{tokenSymbol}</span>
+                                                        {hasInsufficientBalance && <IconAlert size={12} />}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    }
+                                />
+                                {tokenError && (
+                                    <div className="mt-2 text-xs font-bold text-red-500 flex items-center gap-1 animate-pulse">
+                                        <IconAlert size={12} /> {tokenError}
+                                    </div>
+                                )}
+                            </div>
+
+                            {mode === 'FIXED' && tokenType !== 'ERC721' && (
+                                <div className="mb-8 animate-in fade-in slide-in-from-top-4 duration-300">
+                                    <Input label="Amount per Address" placeholder="0.00" type="number" value={fixedAmount} onChange={setFixedAmount} className="text-lg" />
+                                </div>
+                            )}
+
+                            <div className="mb-6">
+                                <ToggleGroup value={inputMethod} onChange={setInputMethod} options={[{ label: 'Manual Input', value: 'MANUAL' }, { label: 'CSV Upload', value: 'CSV' }]} />
+                            </div>
+
+                            <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                                        Recipient List <span className="bg-violet-100 text-violet-600 text-xs px-2 py-0.5 rounded-full border border-violet-200">{recipients.length}</span>
+                                    </h3>
+                                    <div className="flex items-center gap-2">
+                                        {inputMethod === 'MANUAL' && ( <button onClick={removeDuplicates} className="text-xs text-violet-500 hover:text-violet-700 font-bold hover:underline flex items-center gap-1"><IconFilter size={12}/> Dedup</button> )}
+                                        {inputMethod === 'MANUAL' && ( <button onClick={clearAll} className="text-xs text-red-400 hover:text-red-500 font-bold hover:underline">Clear List</button> )}
+                                    </div>
+                                </div>
+
+                                {inputMethod === 'MANUAL' ? (
+                                    <div className="space-y-3">
+                                        <div className="flex gap-3 px-1 text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                            <div className="flex-grow pl-1">Wallet Address</div>
+                                            {(tokenType === 'ERC721' || tokenType === 'ERC1155') && (
+                                                <div className="w-24 text-left pl-1">ID#</div>
+                                            )}
+                                            {(mode === 'VARIABLE' && tokenType !== 'ERC721') && (
+                                                <div className="w-24 text-left pl-1">Qty</div>
+                                            )}
+                                            <div className="w-[42px]"></div>
+                                        </div>
+
+                                        <div className="max-h-[300px] overflow-y-auto pr-2 space-y-3 custom-scrollbar">
+                                            {recipients.map((recipient, index) => (
+                                                <div key={index} className="flex gap-3 items-start animate-in fade-in duration-200">
+                                                    <div className="flex-grow font-mono text-sm">
+                                                        <input type="text" placeholder="0x... Address" value={recipient.address} onChange={(e) => handleRecipientChange(index, 'address', e.target.value)}
+                                                            className="w-full bg-white ink-input rounded-lg px-3 py-2.5 placeholder:text-gray-400 transition-colors shadow-sm" />
+                                                    </div>
+                                                    
+                                                    {(tokenType === 'ERC721' || tokenType === 'ERC1155') && (
+                                                        <div className="w-24 font-mono text-sm">
+                                                            <input type="number" placeholder="ID#" value={recipient.tokenId} onChange={(e) => handleRecipientChange(index, 'tokenId', e.target.value)}
+                                                                className="w-full bg-white ink-input rounded-lg px-3 py-2.5 placeholder:text-gray-400 text-right transition-colors shadow-sm" />
+                                                        </div>
+                                                    )}
+
+                                                    {(mode === 'VARIABLE' && tokenType !== 'ERC721') && (
+                                                        <div className="w-24 font-mono text-sm">
+                                                            <input type="number" placeholder="Qty" value={recipient.amount} onChange={(e) => handleRecipientChange(index, 'amount', e.target.value)}
+                                                                className="w-full bg-white ink-input rounded-lg px-3 py-2.5 placeholder:text-gray-400 text-right transition-colors shadow-sm" />
+                                                        </div>
+                                                    )}
+
+                                                    <Button variant="ghost" onClick={() => handleRemoveRecipient(index)} className="mt-0.5 h-[42px] w-[42px] border border-transparent hover:border-red-200">
+                                                        <IconTrash size={18} />
+                                                    </Button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <Button variant="outline" onClick={handleAddRecipient} fullWidth className="mt-4 border-dashed border-gray-300 text-gray-500 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50">
+                                            <IconPlus size={18} /> Add Recipient
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center transition-all cursor-pointer bg-white ${isDragOver ? 'border-violet-500 bg-violet-50' : 'border-gray-300 hover:border-violet-400 hover:bg-gray-50'}`}
+                                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }} onDragLeave={() => setIsDragOver(false)} onDrop={(e) => { e.preventDefault(); setIsDragOver(false); const file = e.dataTransfer.files[0]; if(file) { const reader = new FileReader(); reader.onload = (ev) => processCSV(ev.target.result); reader.readAsText(file); } }} >
+                                        <div className="bg-violet-50 p-4 rounded-full mb-4"><IconUpload className="text-violet-500" size={32} /></div>
+                                        <h3 className="text-lg font-bold text-gray-800 mb-2">Upload CSV File</h3>
+                                        <label className="btn-gradient text-white font-bold py-2 px-6 rounded-lg cursor-pointer transition-colors shadow-lg shadow-violet-200">
+                                            Browse Files <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+                                        </label>
+                                        <div className="mt-6 p-3 bg-gray-100 rounded text-left w-full max-w-xs border border-gray-200">
+                                            <div className="text-xs text-gray-500 font-bold uppercase mb-2 flex items-center gap-1"><IconInfo size={12}/> {tokenType} CSV Format</div>
+                                            <code className="text-xs font-mono text-gray-600 block bg-white p-2 rounded border border-gray-200 whitespace-pre-wrap">{getCsvExample()}</code>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4 mb-8">
+                                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                                    <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">Recipients</span>
+                                    <div className="text-2xl font-bold text-gray-800 font-mono mt-1">{recipientCount}</div>
+                                </div>
+                                <div className={`bg-white p-4 rounded-lg border shadow-sm transition-all duration-300 ${hasInsufficientBalance ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}>
+                                    <span className={`text-xs font-bold uppercase tracking-wider ${hasInsufficientBalance ? 'text-red-500' : 'text-gray-500'}`}>{tokenType === 'ERC721' ? 'Total NFTs' : 'Total Tokens'}</span>
+                                    <div className={`text-2xl font-bold font-mono mt-1 ${hasInsufficientBalance ? 'text-red-600' : 'text-violet-600'}`}>
+                                        {tokenType === 'ERC721' ? recipientCount : totalTokens.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <Button 
+                                fullWidth 
+                                disabled={!walletConnected || recipientCount === 0 || (walletConnected && chainId !== INK_CHAIN_ID_DEC) || hasInsufficientBalance} 
+                                onClick={handleExecuteAirdrop} 
+                                className={`py-4 text-lg ${hasInsufficientBalance ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                            >
+                                {walletConnected ? (chainId !== INK_CHAIN_ID_DEC ? 'Switch to Ink Network' : (hasInsufficientBalance ? 'Insufficient Balance' : 'Approve & Airdrop')) : 'Connect Wallet First'}
+                            </Button>
+                        </Card>
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
