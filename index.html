@@ -160,6 +160,9 @@
         const IconCheck = ({ size = 24, className = "" }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"/></svg>
         );
+        const IconSearch = ({ size = 24, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        );
 
         // --- UI COMPONENTS ---
 
@@ -271,6 +274,11 @@
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [isLoadingUserTokens, setIsLoadingUserTokens] = useState(false);
             const dropdownRef = useRef(null);
+            
+            // Validation State
+            const [isValidating, setIsValidating] = useState(false);
+            const [validationSuccess, setValidationSuccess] = useState(null);
+            const [problematicAddresses, setProblematicAddresses] = useState([]);
 
             // Safe Balance Formatter to prevent crashes
             const safeFormatBalance = (balance, decimals) => {
@@ -293,26 +301,34 @@
                 }
                 setRecipients([...recipients, { address: '', amount: '', tokenId: '' }]);
                 setErrorMsg(null);
+                setValidationSuccess(null);
+                setProblematicAddresses([]);
             };
 
             const handleRemoveRecipient = (index) => {
                 const newRecipients = recipients.filter((_, i) => i !== index);
                 setRecipients(newRecipients.length ? newRecipients : [{ address: '', amount: '', tokenId: '' }]);
+                setValidationSuccess(null);
+                setProblematicAddresses([]);
             };
 
             const handleRecipientChange = (index, field, value) => {
                 const newRecipients = [...recipients];
                 newRecipients[index][field] = value;
                 setRecipients(newRecipients);
+                setValidationSuccess(null);
+                setProblematicAddresses([]);
             };
 
             const clearAll = () => {
                 setRecipients([{ address: '', amount: '', tokenId: '' }]);
                 setFixedAmount('');
                 setErrorMsg(null);
+                setValidationSuccess(null);
                 setTokenError(null);
                 setTxStatus('IDLE');
                 setTxHash(null);
+                setProblematicAddresses([]);
             };
 
             const removeDuplicates = () => {
@@ -334,8 +350,94 @@
                 if (duplicatesFound > 0) {
                     setRecipients(Array.from(unique.values()));
                     setErrorMsg(null); // Clear errors
+                    setValidationSuccess(null);
                 }
             };
+
+            const removeProblematicAddresses = () => {
+                if (problematicAddresses.length === 0) return;
+                
+                const initialCount = recipients.length;
+                // Filter out addresses that match any in the problematic list
+                // We use Set for faster lookup and case-insensitive check
+                const problemSet = new Set(problematicAddresses.map(a => a.toLowerCase()));
+                const newRecipients = recipients.filter(r => !problemSet.has(r.address.toLowerCase()));
+                
+                setRecipients(newRecipients.length > 0 ? newRecipients : [{ address: '', amount: '', tokenId: '' }]);
+                setValidationSuccess(`Successfully removed ${initialCount - newRecipients.length} smart contract addresses.`);
+                setErrorMsg(null);
+                setProblematicAddresses([]);
+            };
+            
+            const validateAddresses = async () => {
+                if(recipients.length === 0) return;
+                setIsValidating(true);
+                setErrorMsg(null);
+                setValidationSuccess(null);
+                setProblematicAddresses([]);
+                
+                try {
+                    const provider = new ethers.JsonRpcProvider(INK_RPC_URL);
+                    let issues = [];
+                    let contractAddresses = []; 
+
+                    // Check basic formatting first
+                    for(let i=0; i<recipients.length; i++) {
+                        const r = recipients[i];
+                        if(!ethers.isAddress(r.address)) {
+                            issues.push(`Row ${i+1}: Invalid Address format`);
+                        }
+                    }
+                    
+                    // If checking for ERC1155 compatibility (checking for code)
+                    if (tokenType === 'ERC1155') {
+                        // Scan addresses in chunks
+                        const chunks = [];
+                        for (let i = 0; i < recipients.length; i += 20) {
+                            chunks.push(recipients.slice(i, i + 20));
+                        }
+                        
+                        for (const chunk of chunks) {
+                            await Promise.all(chunk.map(async (r) => {
+                                if (ethers.isAddress(r.address)) {
+                                    try {
+                                        const code = await provider.getCode(r.address);
+                                        // Standard nodes return '0x' for EOAs. If longer, it's a contract.
+                                        if (code && code !== '0x') {
+                                            contractAddresses.push(r.address);
+                                        }
+                                    } catch (e) {
+                                        console.warn("Failed to check code for", r.address, e);
+                                    }
+                                }
+                            }));
+                        }
+                        
+                        if (contractAddresses.length > 0) {
+                            // Save ALL problematic addresses to state
+                            setProblematicAddresses(contractAddresses);
+
+                            const shown = contractAddresses.slice(0, 2).join(', ');
+                            const remaining = contractAddresses.length - 2;
+                            const extraText = remaining > 0 ? ` and ${remaining} others` : '';
+                            
+                            issues.push(`Found ${contractAddresses.length} smart contract(s): ${shown}${extraText}. Smart contracts often reject ERC1155 tokens.`);
+                        }
+                    }
+                    
+                    if(issues.length > 0) {
+                        setErrorMsg(`Validation Warning: ${issues.join('. ')}`);
+                    } else {
+                        setValidationSuccess("Validation Passed: No smart contracts or invalid addresses found!");
+                    }
+
+                } catch (e) {
+                    console.error("Validation error:", e);
+                    setErrorMsg("Validation failed due to network error.");
+                } finally {
+                    setIsValidating(false);
+                }
+            }
 
             // Detect Token Standard
             const detectTokenStandard = async (address, provider) => {
@@ -603,6 +705,8 @@
                     newRecipients.push({ address: '', amount: '', tokenId: id });
                 }
                 setRecipients(newRecipients);
+                setValidationSuccess(null);
+                setProblematicAddresses([]);
             };
 
             // --- TOKEN DROPDOWN LOGIC ---
@@ -811,6 +915,8 @@
                     setRecipients(parsed);
                     setInputMethod('MANUAL');
                     setErrorMsg(null);
+                    setValidationSuccess(null);
+                    setProblematicAddresses([]);
                 } catch (e) {
                     setErrorMsg("Failed to parse CSV file.");
                 }
@@ -925,7 +1031,9 @@
 
                 setTxStatus('APPROVING');
                 setErrorMsg(null);
+                setValidationSuccess(null);
                 setTxHash(null);
+                setProblematicAddresses([]);
 
                 try {
                     const provider = new ethers.BrowserProvider(window.ethereum);
@@ -1007,8 +1115,42 @@
                     
                 } catch (err) {
                     console.error("Airdrop failed:", err);
+                    
+                    // --- INTELLIGENT ERROR DECODING ---
+                    let displayMsg = err.reason || err.message || "Transaction failed.";
+                    
+                    // Helper to recursively search for error data in nested objects
+                    const findErrorData = (obj) => {
+                        if (!obj) return null;
+                        if (obj.data && typeof obj.data === 'string') return obj.data;
+                        if (obj.originalError) return findErrorData(obj.originalError);
+                        if (obj.info && obj.info.error) return findErrorData(obj.info.error);
+                        return null;
+                    };
+                    
+                    const errorData = findErrorData(err);
+                    
+                    // Check for ERC1155InvalidReceiver (Selector: 0x57f447ce)
+                    // This error occurs when an ERC1155 token is sent to a contract that doesn't implement onERC1155Received
+                    if (errorData && errorData.includes('57f447ce')) {
+                        // The error data often contains the address that caused the revert
+                        try {
+                            // Strip selector and look for the address
+                            const cleanData = errorData.replace('0x', '');
+                            const potentialAddress = '0x' + cleanData.substring(cleanData.indexOf('57f447ce') + 8 + 24, cleanData.indexOf('57f447ce') + 8 + 64);
+                            
+                            if (ethers.isAddress(potentialAddress)) {
+                                displayMsg = `AIRDROP FAILED: Recipient ${potentialAddress} is a smart contract that cannot receive ERC1155 tokens. Please use the 'Validate' button to find and remove ALL smart contracts.`;
+                            } else {
+                                displayMsg = "AIRDROP FAILED: A recipient is a smart contract that rejected the ERC1155 token. Click 'Validate' to clean your list.";
+                            }
+                        } catch (decodeErr) {
+                            displayMsg = "AIRDROP FAILED: One of the recipients rejected the token. Click 'Validate' to find and remove smart contracts.";
+                        }
+                    }
+
                     setTxStatus('ERROR');
-                    setErrorMsg(err.reason || err.message || "Transaction failed. Please check console.");
+                    setErrorMsg(displayMsg);
                 }
             };
 
@@ -1071,9 +1213,26 @@
 
                         <Card className="p-6 md:p-8">
                             {errorMsg && (
-                                <div className="mb-6 p-3 bg-red-100 border border-red-300 rounded-lg flex items-center gap-2 text-red-700 text-sm font-bold animate-pulse">
-                                    <IconAlert size={16} />
-                                    <span className="break-all">{errorMsg}</span>
+                                <div className="mb-6 p-3 bg-red-100 border border-red-300 rounded-lg flex flex-col gap-2 text-red-700 text-sm font-bold animate-pulse">
+                                    <div className="flex items-start gap-2">
+                                        <IconAlert size={20} className="mt-0.5 min-w-[20px]" />
+                                        <span className="break-words">{errorMsg}</span>
+                                    </div>
+                                    {problematicAddresses.length > 0 && (
+                                        <button 
+                                            onClick={removeProblematicAddresses}
+                                            className="ml-7 self-start bg-red-200 hover:bg-red-300 text-red-800 px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wide border border-red-300 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+                                        >
+                                            <IconTrash size={14} /> Remove {problematicAddresses.length} Smart Contracts
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {validationSuccess && (
+                                <div className="mb-6 p-3 bg-green-100 border border-green-300 rounded-lg flex items-center gap-2 text-green-800 text-sm font-bold animate-in fade-in">
+                                    <IconCheck size={16} />
+                                    <span>{validationSuccess}</span>
                                 </div>
                             )}
                             
@@ -1272,6 +1431,11 @@
                                         Recipient List <span className="bg-violet-100 text-violet-600 text-xs px-2 py-0.5 rounded-full border border-violet-200">{recipients.length}</span>
                                     </h3>
                                     <div className="flex items-center gap-2">
+                                        {recipients.length > 0 && (
+                                            <button onClick={validateAddresses} className="text-xs text-blue-500 hover:text-blue-700 font-bold hover:underline flex items-center gap-1 mr-2">
+                                                {isValidating ? 'Checking...' : <><IconSearch size={12}/> Validate</>}
+                                            </button>
+                                        )}
                                         {inputMethod === 'MANUAL' && ( <button onClick={removeDuplicates} className="text-xs text-violet-500 hover:text-violet-700 font-bold hover:underline flex items-center gap-1"><IconFilter size={12}/> Dedup</button> )}
                                         {inputMethod === 'MANUAL' && ( <button onClick={clearAll} className="text-xs text-red-400 hover:text-red-500 font-bold hover:underline">Clear List</button> )}
                                     </div>
