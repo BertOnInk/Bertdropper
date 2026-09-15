@@ -951,10 +951,12 @@
                 return parseFloat(userBalance) < totalTokens;
             }, [userBalance, totalTokens, tokenType]);
 
+            // WHOLE NUMBER SCALING WITH LARGEST REMAINDER METHOD
             const handleScaleToTarget = () => {
-                const target = parseFloat(targetTotal);
+                // Force target to be a positive integer
+                const target = Math.floor(parseFloat(targetTotal));
                 if (!target || target <= 0) {
-                    setErrorMsg("Please enter a valid target total amount greater than 0.");
+                    setErrorMsg("Please enter a valid whole number target greater than 0.");
                     return;
                 }
 
@@ -964,23 +966,47 @@
                     return;
                 }
 
-                const scaleFactor = target / currentTotal;
-
-                const scaledRecipients = recipients.map(r => {
+                let totalAllocated = 0;
+                
+                // 1. Calculate exact proportions and separate the whole number from the decimal remainder
+                const mapped = recipients.map((r, index) => {
                     const rawAmt = parseFloat(r.amount) || 0;
-                    if (rawAmt === 0) return r;
+                    const exact = (rawAmt / currentTotal) * target;
+                    const floor = Math.floor(exact);
+                    const remainder = exact - floor;
                     
-                    // Scale proportionally and trim unnecessary floating-point trailing zeroes
-                    const scaledVal = parseFloat((rawAmt * scaleFactor).toFixed(6)).toString();
+                    totalAllocated += floor;
+                    
+                    return { index, rawAmt, floor, remainder, finalAmount: floor, originalRow: r };
+                });
+
+                // 2. Calculate how many tokens are missing due to rounding down
+                let deficit = target - totalAllocated;
+
+                // 3. Sort by the highest decimal remainder descending
+                mapped.sort((a, b) => b.remainder - a.remainder);
+
+                // 4. Distribute the missing tokens to those with the highest remainders
+                for (let i = 0; i < deficit; i++) {
+                    if (mapped[i].rawAmt > 0) { // Only give to people who actually had a starting balance
+                        mapped[i].finalAmount += 1;
+                    }
+                }
+
+                // 5. Restore the original order of the rows
+                mapped.sort((a, b) => a.index - b.index);
+
+                // 6. Update the state with purely integer string amounts
+                const scaledRecipients = mapped.map(item => {
                     return {
-                        ...r,
-                        amount: scaledVal
+                        ...item.originalRow,
+                        amount: item.rawAmt === 0 ? '' : item.finalAmount.toString()
                     };
                 });
 
                 setRecipients(scaledRecipients);
                 setErrorMsg(null);
-                setValidationSuccess(`Successfully scaled ${recipients.length} recipients to a total of ${target.toLocaleString()} ${tokenSymbol || 'tokens'}.`);
+                setValidationSuccess(`Successfully scaled to exactly ${target.toLocaleString()} ${tokenSymbol || 'tokens'} (Whole numbers only).`);
             };
 
             const switchNetwork = async () => {
